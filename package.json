@@ -1,0 +1,28 @@
+{
+  "name": "zooid-test",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "tsx src/cli.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.9.3",
+    "vitest": "^3.1.1",
+    "zod": "^3.24.2"
+  },
+  "dependencies": {
+    "@welshman/app": "workspace:*",
+    "@welshman/content": "workspace:*",
+    "@welshman/editor": "workspace:*",
+    "@welshman/feeds": "workspace:*",
+    "@welshman/lib": "workspace:*",
+    "@welshman/net": "workspace:*",
+    "@welshman/router": "workspace:*",
+    "@welshman/signer": "workspace:*",
+    "@welshman/store": "workspace:*",
+    "@welshman/util": "workspace:*"
+  }
+}
