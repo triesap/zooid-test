@@ -1,6 +1,10 @@
 {
     "admin": {
         "secret_key": "64d2da3fe94bfb95822d5a24ad43d39467e650d25577007c01dcf9e66a68830e",
-        "public_key": "1bdebadb5e4bf07c7e99f5b729933adbdde4d3ffb6bb10c11785dae758e7a4be"
+        "public_key": "1bdebadb5e4bf07c7e99f5b729933adbdde4d3ffb6bb10c11785dae758e7a4be",
+        "metadata": {
+            "name": "zooid_tester",
+            "display_name": "Zooid Tester"
+        }
     }
 }

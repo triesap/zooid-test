@@ -118,10 +118,9 @@ const loadIdentities = async (identityPath: string) => {
       public_key: z
         .string()
         .regex(/^[0-9a-f]{64}$/i, "public_key must be 64 hex characters"),
-      kind_0_metadata: z
+      metadata: z
         .record(z.string(), z.unknown())
-        .refine(value => !Array.isArray(value), "kind_0_metadata must be an object")
-        .optional(),
+        .refine(value => !Array.isArray(value), "metadata must be an object"),
     })
     .passthrough()
     .refine(data => getPubkey(data.secret_key) === data.public_key, {
@@ -142,7 +141,7 @@ const loadIdentities = async (identityPath: string) => {
 const resolveIdentity = (
   identities: Record<
     string,
-    {secret_key: string; public_key: string; kind_0_metadata?: Record<string, unknown>}
+    {secret_key: string; public_key: string; metadata: Record<string, unknown>}
   >,
   requested?: string,
 ) => {
@@ -202,7 +201,7 @@ const main = async () => {
     throw new Error("Relay URL missing. Provide --relay <url> or set ZOOID_TEST_RELAY.")
   }
 
-  const metadata = identity.kind_0_metadata || {name: identityName}
+  const metadata = identity.metadata
   const metadataJson = JSON.stringify(metadata)
   const env = {
     ...process.env,
@@ -212,8 +211,6 @@ const main = async () => {
     ZOOID_TEST_RELAY: relay,
     ZOOID_TEST_METADATA: metadataJson,
   }
-
-  console.log("identity", identity)
 
   const binName = process.platform === "win32" ? "vitest.cmd" : "vitest"
   const vitestPath = path.join(packageRoot, "node_modules", ".bin", binName)
