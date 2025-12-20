@@ -9,13 +9,14 @@ import {
   type PublishResult,
 } from "@welshman/net"
 import {Nip01Signer} from "@welshman/signer"
-import type {SignedEvent, TrustedEvent} from "@welshman/util"
+import type {Filter, SignedEvent, TrustedEvent} from "@welshman/util"
 import type {TestConfig} from "./config.js"
 
 export type TestClient = {
   relayUrl: string
   signer: Nip01Signer
   publishEvent: (event: SignedEvent) => Promise<PublishResult>
+  fetchEvents: (filters: Filter[]) => Promise<TrustedEvent[]>
   fetchEvent: (id: string) => Promise<TrustedEvent | undefined>
   close: () => void
 }
@@ -36,15 +37,19 @@ export const createTestClient = (config: TestConfig): TestClient => {
     return results[config.relayUrl]
   }
 
-  const fetchEvent = async (id: string) => {
-    const events = await request({
+  const fetchEvents = async (filters: Filter[]) => {
+    return request({
       relays: [config.relayUrl],
-      filters: [{ids: [id]}],
+      filters,
       context,
       autoClose: true,
       signal: AbortSignal.timeout(8000),
       isEventValid: () => true,
     })
+  }
+
+  const fetchEvent = async (id: string) => {
+    const events = await fetchEvents([{ids: [id]}])
 
     return events.find(event => event.id === id)
   }
@@ -53,6 +58,7 @@ export const createTestClient = (config: TestConfig): TestClient => {
     relayUrl: config.relayUrl,
     signer,
     publishEvent,
+    fetchEvents,
     fetchEvent,
     close: () => pool.clear(),
   }

@@ -1,14 +1,22 @@
 import {readFile} from "node:fs/promises"
-import {existsSync} from "node:fs"
+import {createWriteStream, existsSync} from "node:fs"
 import {spawn} from "node:child_process"
 import {fileURLToPath} from "node:url"
 import path from "node:path"
 import process from "node:process"
 import {z} from "zod"
 import {getPubkey} from "@welshman/util"
+import {
+  ensureOutputDir,
+  formatRunId,
+  loadEnvFile,
+  readJsonFile,
+  writeJsonFile,
+} from "./testing/reporting.js"
 
 type ParsedArgs = {
   identity?: string
+  identity2?: string
   relay?: string
   help: boolean
   vitestArgs: string[]
@@ -21,12 +29,20 @@ Usage:
 
 Options:
   -i, --identity <name>  Identity key to use from identity.json
+  --identity2 <name>     Secondary identity key to use from identity.json
   -r, --relay <url>      Relay websocket URL to test
   -h, --help             Show this help
 
+Environment:
+  ZOOID_TEST_RELAY        Default relay URL if --relay is omitted
+  ZOOID_TEST_IDENTITY     Default identity name if --identity is omitted
+  ZOOID_TEST_IDENTITY2    Default secondary identity if --identity2 is omitted
+  ZOOID_TEST_OUTPUT_ROOT  Output root for test artifacts (default: zooid-test/test-results)
+
 Examples:
-  pnpm test -- --identity admin --relay ws://localhost:3334
-  pnpm test -- --identity admin --relay wss://relay.example -t "kind 1"
+  pnpm test -- --identity relay_admin --relay ws://localhost:3334
+  pnpm test -- --identity relay_admin --identity2 member_1 --relay ws://localhost:3334 -t "kind 5"
+  pnpm test -- --identity relay_admin --relay wss://relay.example -t "kind 1"
 `
 
 const parseArgs = (args: string[]): ParsedArgs => {
@@ -66,6 +82,21 @@ const parseArgs = (args: string[]): ParsedArgs => {
 
     if (arg.startsWith("--identity=")) {
       parsed.identity = arg.slice("--identity=".length)
+      continue
+    }
+
+    if (arg === "--identity2") {
+      const value = args[i + 1]
+      if (!value || value.startsWith("-")) {
+        throw new Error("Missing value for --identity2")
+      }
+      parsed.identity2 = value
+      i += 1
+      continue
+    }
+
+    if (arg.startsWith("--identity2=")) {
+      parsed.identity2 = arg.slice("--identity2=".length)
       continue
     }
 
@@ -180,6 +211,40 @@ const buildVitestArgs = (args: string[]) => {
   return ["run", ...args]
 }
 
+const collectReporters = (args: string[]) => {
+  const reporters: string[] = []
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i]
+    if (arg === "--reporter") {
+      const value = args[i + 1]
+      if (value) {
+        reporters.push(value)
+        i += 1
+      }
+      continue
+    }
+    if (arg.startsWith("--reporter=")) {
+      reporters.push(arg.slice("--reporter=".length))
+    }
+  }
+  return reporters
+}
+
+const ensureVitestReportArgs = (args: string[], reportPath: string) => {
+  const reporters = collectReporters(args)
+  const next = [...args]
+
+  if (reporters.length === 0) {
+    next.push("--reporter=default")
+  }
+  if (!reporters.includes("json")) {
+    next.push("--reporter=json")
+  }
+  next.push("--outputFile", reportPath)
+
+  return next
+}
+
 const main = async () => {
   const parsed = parseArgs(process.argv.slice(2))
 
@@ -190,11 +255,16 @@ const main = async () => {
 
   const scriptDir = path.dirname(fileURLToPath(import.meta.url))
   const packageRoot = path.resolve(scriptDir, "..")
+  await loadEnvFile(path.join(packageRoot, ".env"))
   const identityPath = path.join(packageRoot, "identity.json")
 
   const identities = await loadIdentities(identityPath)
   const requestedIdentity = parsed.identity || process.env.ZOOID_TEST_IDENTITY
   const {name: identityName, identity} = resolveIdentity(identities, requestedIdentity)
+  const requestedIdentity2 = parsed.identity2 || process.env.ZOOID_TEST_IDENTITY2
+  const identity2 = requestedIdentity2
+    ? resolveIdentity(identities, requestedIdentity2)
+    : undefined
 
   const relay = parsed.relay || process.env.ZOOID_TEST_RELAY
   if (!relay) {
@@ -203,13 +273,20 @@ const main = async () => {
 
   const metadata = identity.metadata
   const metadataJson = JSON.stringify(metadata)
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     ZOOID_TEST_IDENTITY: identityName,
     ZOOID_TEST_SECRET: identity.secret_key,
     ZOOID_TEST_PUBKEY: identity.public_key,
     ZOOID_TEST_RELAY: relay,
     ZOOID_TEST_METADATA: metadataJson,
+  }
+
+  if (identity2) {
+    env.ZOOID_TEST_IDENTITY2 = identity2.name
+    env.ZOOID_TEST_SECRET2 = identity2.identity.secret_key
+    env.ZOOID_TEST_PUBKEY2 = identity2.identity.public_key
+    env.ZOOID_TEST_METADATA2 = JSON.stringify(identity2.identity.metadata)
   }
 
   const binName = process.platform === "win32" ? "vitest.cmd" : "vitest"
@@ -219,11 +296,35 @@ const main = async () => {
     throw new Error(`vitest not found at ${vitestPath}. Run pnpm install in zooid-test.`)
   }
 
+  const outputRoot =
+    process.env.ZOOID_TEST_OUTPUT_ROOT ?? path.join(packageRoot, "test-results")
+  const runId = formatRunId(new Date())
+  const outputDir = await ensureOutputDir(outputRoot, runId)
+  const reportTargetPath = path.join(outputDir, "vitest.json")
+  const reportTargetArg = path.relative(packageRoot, reportTargetPath)
+  const logPath = path.join(outputDir, "vitest.log")
+
+  env.ZOOID_TEST_OUTPUT_DIR = outputDir
+
   const vitestArgs = buildVitestArgs(parsed.vitestArgs)
-  const child = spawn(vitestPath, vitestArgs, {
+  const finalVitestArgs = ensureVitestReportArgs(vitestArgs, reportTargetArg)
+
+  const logStream = createWriteStream(logPath)
+
+  const child = spawn(vitestPath, finalVitestArgs, {
     cwd: packageRoot,
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "pipe"],
     env,
+  })
+
+  child.stdout?.on("data", chunk => {
+    logStream.write(chunk)
+    process.stdout.write(chunk)
+  })
+
+  child.stderr?.on("data", chunk => {
+    logStream.write(chunk)
+    process.stderr.write(chunk)
   })
 
   child.on("error", error => {
@@ -232,7 +333,30 @@ const main = async () => {
   })
 
   child.on("exit", code => {
-    process.exit(code ?? 1)
+    const exitCode = code ?? 1
+
+    const finalize = async () => {
+      await new Promise<void>(resolve => {
+        logStream.end(() => resolve())
+      })
+
+      if (existsSync(reportTargetPath)) {
+        try {
+          const report = await readJsonFile(reportTargetPath)
+          await writeJsonFile(reportTargetPath, report)
+        } catch (error) {
+          console.error(`Error: Failed to format vitest.json. ${String(error)}`)
+        }
+      }
+    }
+
+    finalize()
+      .catch(error => {
+        console.error(`Error: Failed to write test summary. ${String(error)}`)
+      })
+      .finally(() => {
+        process.exit(exitCode)
+      })
   })
 }
 

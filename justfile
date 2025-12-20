@@ -1,2 +1,4 @@
+relay_url := "ws://localhost:3334"
+
 test:
-    pnpm test -- --identity admin --relay ws://localhost:3334
+    pnpm test -- --identity 'relay_admin' --identity2 'member_1' --relay {{relay_url}}

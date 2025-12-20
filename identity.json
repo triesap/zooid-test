@@ -1,10 +1,26 @@
 {
-    "admin": {
+    "relay_owner": {
+        "secret_key": "f48cd2832aebf006fb2ab2bc38c298558445c24b8d44f86d80fdc774205c9029",
+        "public_key": "1bdebdefe803ab7c0222bf6a039ffabcb3d5a604dac8ec468b03a67e1fc39d24",
+        "metadata": {
+            "name": "zooid_relay_owner",
+            "display_name": "Zooid Relay Owner"
+        }
+    },
+    "relay_admin": {
         "secret_key": "64d2da3fe94bfb95822d5a24ad43d39467e650d25577007c01dcf9e66a68830e",
         "public_key": "1bdebadb5e4bf07c7e99f5b729933adbdde4d3ffb6bb10c11785dae758e7a4be",
         "metadata": {
-            "name": "zooid_tester",
-            "display_name": "Zooid Tester"
+            "name": "zooid_relay_admin",
+            "display_name": "Zooid Relay Admin"
+        }
+    },
+    "member_1": {
+        "secret_key": "1b0d7fec0431440ff5ce90df45d3521b380169c41df8bdf468343b2bf5ee61d7",
+        "public_key": "1bdeb3f78921b93a83fa96c2afcc480228407e91d9437f76bbb9987612f19b86",
+        "metadata": {
+            "name": "zooid_member_1",
+            "display_name": "Zooid Member #1"
         }
     }
 }
