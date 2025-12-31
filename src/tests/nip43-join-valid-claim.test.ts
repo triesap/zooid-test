@@ -24,17 +24,18 @@ const triggerAuth = async (client: TestClient) => {
 }
 
 const getInviteClaim = async (client: TestClient, adminPubkey: string) => {
+  await triggerAuth(client)
   const invites = await client.fetchEvents([{kinds: [RELAY_INVITE]}])
-  const candidates = invites.filter(
-    event =>
-      event.tags?.some(tag => tag[0] === "p" && tag[1] === adminPubkey) &&
-      event.tags?.some(tag => tag[0] === "claim"),
+  const withClaim = invites.filter(event => event.tags?.some(tag => tag[0] === "claim"))
+  const candidates = withClaim.filter(event =>
+    event.tags?.some(tag => tag[0] === "p" && tag[1] === adminPubkey),
   )
-  const invite = candidates.sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0]
+  const pool = candidates.length ? candidates : withClaim
+  const invite = pool.sort((a, b) => (b.created_at ?? 0) - (a.created_at ?? 0))[0]
   const claimTag = invite?.tags?.find(tag => tag[0] === "claim")
 
   if (!claimTag?.[1]) {
-    throw new Error("Invite claim not found for relay admin.")
+    throw new Error(`Invite claim not found (invites: ${invites.length}).`)
   }
 
   return claimTag[1]
@@ -49,7 +50,16 @@ const joinWithClaimRetry = async (
   attempts = 3,
 ) => {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const claim = await getInviteClaim(admin, adminPubkey)
+    let claim: string
+    try {
+      claim = await getInviteClaim(admin, adminPubkey)
+    } catch (error) {
+      if (attempt < attempts - 1) {
+        await sleep(150)
+        continue
+      }
+      throw error
+    }
     const joinEvent = await member.signer.sign(makeEvent(RELAY_JOIN, {tags: [["claim", claim]]}))
     const result = await member.publishEvent(joinEvent)
 
