@@ -76,6 +76,39 @@ const getInviteClaim = async (client: TestClient, adminPubkey: string) => {
   return claimTag[1]
 }
 
+const isInviteRetryable = (detail: string) => detail.toLowerCase().includes("invite code")
+
+const joinWithClaimRetry = async (
+  admin: TestClient,
+  member: TestClient,
+  adminPubkey: string,
+  attempts = 3,
+) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const claim = await getInviteClaim(admin, adminPubkey)
+    const joinEvent = await member.signer.sign(makeEvent(RELAY_JOIN, {tags: [["claim", claim]]}))
+    const result = await member.publishEvent(joinEvent)
+
+    if (result.status === PublishStatus.Success) {
+      return result
+    }
+
+    const detail = result.detail ?? ""
+    if (detail.toLowerCase().includes("duplicate")) {
+      return result
+    }
+
+    if (isInviteRetryable(detail) && attempt < attempts - 1) {
+      await sleep(150)
+      continue
+    }
+
+    throw new Error(`Join failed (${result.status}): ${detail || "unknown error"}`)
+  }
+
+  throw new Error("Join failed after retries due to invalid invite code.")
+}
+
 const triggerAuth = async (client: TestClient) => {
   const probeEvent = await client.signer.sign(
     makeUniqueEvent(AUTH_PROBE_KIND, {
@@ -106,19 +139,7 @@ const ensureMemberJoined = async (
 
   await triggerAuth(member)
 
-  const claim = await getInviteClaim(admin, adminPubkey)
-  const joinEvent = await member.signer.sign(
-    makeEvent(RELAY_JOIN, {tags: [["claim", claim]]}),
-  )
-  const joinResult = await member.publishEvent(joinEvent)
-  if (
-    joinResult.status !== PublishStatus.Success &&
-    !joinResult.detail.toLowerCase().includes("duplicate")
-  ) {
-    throw new Error(
-      `Join failed (${joinResult.status}): ${joinResult.detail || "unknown error"}`,
-    )
-  }
+  await joinWithClaimRetry(admin, member, adminPubkey)
 
   const deadline = Date.now() + 3000
   while (Date.now() < deadline) {

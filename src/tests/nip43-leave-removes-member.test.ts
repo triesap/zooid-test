@@ -1,11 +1,12 @@
-import {afterAll, beforeAll, describe, expect, it} from "vitest"
+import {afterAll, beforeAll, describe, it} from "vitest"
 import {PublishStatus} from "@welshman/net"
-import {makeEvent} from "@welshman/util"
+import {getPubkey, makeEvent, makeSecret} from "@welshman/util"
 import {createTestClient, type TestClient} from "../testing/client.js"
-import {loadSecondaryConfig, loadTestConfig, type TestConfig} from "../testing/config.js"
+import {loadTestConfig, type TestConfig} from "../testing/config.js"
 
 const RELAY_JOIN = 28934
 const RELAY_INVITE = 28935
+const RELAY_LEAVE = 28936
 const RELAY_MEMBERS = 13534
 const AUTH_PROBE_KIND = 20000
 
@@ -92,6 +93,19 @@ const waitForMember = async (client: TestClient, pubkey: string) => {
   throw new Error("Member was not added to RELAY_MEMBERS list.")
 }
 
+const waitForNonMember = async (client: TestClient, pubkey: string) => {
+  const deadline = Date.now() + 3000
+
+  while (Date.now() < deadline) {
+    if (!(await hasMember(client, pubkey))) {
+      return
+    }
+    await sleep(150)
+  }
+
+  throw new Error("Member was not removed from RELAY_MEMBERS list.")
+}
+
 const ensureMemberJoined = async (
   admin: TestClient,
   member: TestClient,
@@ -108,7 +122,7 @@ const ensureMemberJoined = async (
   await waitForMember(admin, memberPubkey)
 }
 
-describe("relay join while already member", () => {
+describe("relay leave", () => {
   let adminClient: TestClient
   let memberClient: TestClient
   let adminConfig: TestConfig
@@ -116,7 +130,14 @@ describe("relay join while already member", () => {
 
   beforeAll(() => {
     adminConfig = loadTestConfig()
-    memberConfig = loadSecondaryConfig(adminConfig.relayUrl)
+    const secretKey = makeSecret()
+    memberConfig = {
+      relayUrl: adminConfig.relayUrl,
+      identityName: "ephemeral_member",
+      secretKey,
+      pubkey: getPubkey(secretKey),
+      metadata: {},
+    }
     adminClient = createTestClient(adminConfig)
     memberClient = createTestClient(memberConfig)
   })
@@ -126,7 +147,7 @@ describe("relay join while already member", () => {
     memberClient?.close()
   })
 
-  it("accepts join requests from existing members", async () => {
+  it("removes a member from RELAY_MEMBERS", async () => {
     await ensureMemberJoined(
       adminClient,
       memberClient,
@@ -134,13 +155,13 @@ describe("relay join while already member", () => {
       memberConfig.pubkey,
     )
 
-    await triggerAuth(memberClient)
-    const result = await joinWithClaimRetry(
-      adminClient,
-      memberClient,
-      adminConfig.pubkey,
-    )
+    const leaveEvent = await memberClient.signer.sign(makeEvent(RELAY_LEAVE))
+    const result = await memberClient.publishEvent(leaveEvent)
 
-    expect(result.status).toBe(PublishStatus.Success)
+    if (result.status !== PublishStatus.Success) {
+      throw new Error(`Leave failed (${result.status}): ${result.detail}`)
+    }
+
+    await waitForNonMember(adminClient, memberConfig.pubkey)
   })
 })

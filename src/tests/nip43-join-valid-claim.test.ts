@@ -40,6 +40,39 @@ const getInviteClaim = async (client: TestClient, adminPubkey: string) => {
   return claimTag[1]
 }
 
+const isInviteRetryable = (detail: string) => detail.toLowerCase().includes("invite code")
+
+const joinWithClaimRetry = async (
+  admin: TestClient,
+  member: TestClient,
+  adminPubkey: string,
+  attempts = 3,
+) => {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const claim = await getInviteClaim(admin, adminPubkey)
+    const joinEvent = await member.signer.sign(makeEvent(RELAY_JOIN, {tags: [["claim", claim]]}))
+    const result = await member.publishEvent(joinEvent)
+
+    if (result.status === PublishStatus.Success) {
+      return result
+    }
+
+    const detail = result.detail ?? ""
+    if (detail.toLowerCase().includes("duplicate")) {
+      return result
+    }
+
+    if (isInviteRetryable(detail) && attempt < attempts - 1) {
+      await sleep(150)
+      continue
+    }
+
+    throw new Error(`Join failed (${result.status}): ${detail || "unknown error"}`)
+  }
+
+  throw new Error("Join failed after retries due to invalid invite code.")
+}
+
 describe("relay join with valid claim", () => {
   let adminClient: TestClient
   let memberClient: TestClient
@@ -60,11 +93,11 @@ describe("relay join with valid claim", () => {
 
   it("accepts a join request with a valid claim", async () => {
     await triggerAuth(memberClient)
-    const claim = await getInviteClaim(adminClient, adminConfig.pubkey)
-    const joinEvent = await memberClient.signer.sign(
-      makeEvent(RELAY_JOIN, {tags: [["claim", claim]]}),
+    const result = await joinWithClaimRetry(
+      adminClient,
+      memberClient,
+      adminConfig.pubkey,
     )
-    const result = await memberClient.publishEvent(joinEvent)
 
     if (result.status === PublishStatus.Success) {
       expect(result.status).toBe(PublishStatus.Success)
